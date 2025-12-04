@@ -1,0 +1,141 @@
+---
+title: "Data Analysis Mini-Project"
+author: "Tomasz Petecki"
+format:
+  pdf:
+    fontsize: 11pt
+    geometry: margin=1in
+    linestretch: 1.1
+editor: visual
+---
+
+```{r}
+#| include: false
+raw_data_file = "../../data/raw/migraine_dataset.csv"
+lstm_report = "../../data/processed/lstm_report.csv"
+rf_report = "../../data/processed/randomforest_report.csv"
+plots_dir = "../../src/reports/figures/"
+root = "../../"
+```
+
+# Introduction
+
+Migraine affects over a billion people globally, representing one of the leading causes of short-term disability. Despite the widespread impact, many individuals with migraines fail to manage their attacks effectively, often waiting until symptoms become unbearable before taking action. This project aims to shift migraine care from a reactive to a predictive approach using advanced machine learning techniques, specifically Long Short-Term Memory (LSTM) models, to forecast migraine attacks.
+
+By leveraging signals such as, sleep patterns, screen time, and hydration levels, one might seeks to predict when a migraine is likely to occur. The goal is to develop a tool that empowers users by providing insights into their unique migraine trigger patterns. Our project aims to improve life quality for millions of people and create a solution that can scale globally (provided the models work).
+
+**Brief summary of what was achieved:** Collected data from wearables was cleaned and preprocessed in order to learn the migraine patterns from the data. Two methods were emplyed - Random Forest and Long Short-Term Memory (LSTM) neural networ.
+
+# Data Collection and Pre-processing
+
+## Collection and content
+
+I used a dataset available on Kaggle - [Migraine Dataset from Wearable Devices](https://www.kaggle.com/datasets/hebaqueen/migraine-dataset-from-wearable-devices?resource=download). The quality and source of the data is challenging to assess as there were no information about the origin of data. Dataset contains 11,879 entries from 100 users, in the following columns: `user_id, date, sleep_hours, mood_level, stress_level, hydration_level, screen_time, migraine_occurrence, migraine_severity`. The only continuous data in the set is pertains to the *hours of sleep* and *screen time*, the rest of the columns is either self explainatory or represents categorical data – levels from 1 to 5. Raw data is presented in the table below:
+
+```{r echo=FALSE}
+df = read.csv(raw_data_file)
+head(df)
+```
+
+## Preprocessing
+
+Although the data was claimed to be clean, a standard preprocessing procedures were conducted among the others I cleaned the data by removing potential missing values. Also, I added target features (occurrence of a migraine tomorrow), added some cyclical features (in order to capture weekly or monthly cycles, day-of-the-week and day-of-the-month features were added as sinusoidal signals) for improved learning of the LSTM network. For more insight, I encourage to look at the git repo where the preprocessing functions and feature-specific functions were included.
+
+In the case of the Random Forest no further preprocessing was required, while in the case of the LSTM the data had to be truncated as each user contributed a different number of rows.
+
+# Exploratory Data Analysis
+
+Part of EDA included looking at multiple graphs to spot some clear patterns. To this end, throughout the analysis functions from the module `utils` in the git repo were incorporated.
+
+Major part of the Exploratory Data Analysis was to learn from what is the relation between the different variables, for this reason I firstly plotted some raw data plots with highlighted migraine episodes, to hopefully spot some trends.
+
+![Raw data plot with migraine episodes one day ahead highlighted in red](../../src/reports/figures/raw_data_plot1.svg){width=100% fig-align="center"} 
+
+Then to get the necessary relations in the data, I binned the data and plotted bunch of heatmaps. Also, I conducted a small regression analsysis. I was looking to find the regression coefficients that describe the linear relationships between multiple variables in the dataset. The linear regression model can be written in matrix form as:
+
+$$
+\mathbf{y} = \mathbf{X} \boldsymbol{\beta} + \boldsymbol{\epsilon}
+$$
+
+Where $\mathbf{y}$ is the vector of dependent variables (e.g., `sleep_hours`, `mood_level`, etc.), $\mathbf{X}$ is the matrix of independent variables $\boldsymbol{\beta}$ is the vector of regression coefficients, $\boldsymbol{\epsilon}$ is the vector of residuals (errors).
+
+The vector of regression coefficients $\boldsymbol{\beta}$ is estimated by solving the following normal equation:
+$$
+\boldsymbol{\beta} = (\mathbf{X}^T \mathbf{X})^{-1} \mathbf{X}^T \mathbf{y}
+$$
+In the case of pairwise regressions, each variable in the dataset is treated as a column in $\mathbf{X}$, and we compute the regression coefficient $\boldsymbol{\beta}_i$ for each variable $i$ by solving this equation for each pair of variables.The results are shown in the table below:
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE}
+# Load necessary library
+library(dplyr)
+
+df_pooled <- df %>%
+  select(-c(user_id, date, migraine_occurrence))
+
+# Fperform linear regression and extract coefficients
+get_coefficients <- function(x, y) {
+  model <- lm(y ~ x)
+  return(coef(model)[2])
+}
+
+coef_matrix <- matrix(NA, nrow = ncol(df_pooled), ncol = ncol(df_pooled))
+rownames(coef_matrix) <- colnames(df_pooled)
+colnames(coef_matrix) <- colnames(df_pooled)
+
+for (i in 1:(ncol(df_pooled) - 1)) {
+  for (j in (i + 1):ncol(df_pooled)) {
+    coef_matrix[i, j] <- get_coefficients(df_pooled[[i]], df_pooled[[j]])
+    coef_matrix[j, i] <- coef_matrix[i, j] 
+  }
+}
+
+# matrix tro df
+coef_df <- as.data.frame(coef_matrix)
+
+# View the matrix
+print(coef_df)
+```
+From the table it should be quite evident that the regression coefficients in the data are quite low, which is somewhat dissapointing. One of the more correlated variables with migraine severity is turned out to be hydration. However, we might want to look at this from a slightly different angle.
+
+The heatmaps, although they contain some of the information from this table, are quite informative when it comes to the "correlations" in the data. In the heatmap below, one can see the probability of the migraine tomorrow over some binned data. They were constructed for pooled data from all users.
+
+![Heatmaps of the probability of a migraine tomorrow](../../src/reports/figures/eda_heatmap.svg){width=100% fig-align="center"}
+Here, for example in the first heatmap, we see that migraine probability is greatest in the regions of least sleep hours. The same goes for other variables except maybe hydration level, which is a surprise taking into consideration its high correlation with migraine severity. So maybe hydration level aggravate migraines that were already bound to happen, but hydration level alone is a weak predictor of the occurrence of a migraine episode the next day?
+
+# Learning From Data
+
+We used two following methods to learn from the data: Random Forest and LSTM network. Both were tested but the accuracy of classification was rather poor in both cases. Nevertheless, following good reporting practices, I include both in my report.
+
+## Random Forest
+
+In the context of regression or classification tasks, the Random Forest algorithm constructs a set of $B$ decision trees, where each tree is built using a bootstrap sample from the data. Each decision tree $T_b$ makes a prediction $\hat{y}_b$, and the final prediction $\hat{y}$ is obtained by aggregating the predictions from all trees. For regression, the aggregation is typically done by averaging the predictions:
+$$
+\hat{y} = \frac{1}{B} \sum_{b=1}^{B} \hat{y}_b
+$$
+For classification, the aggregation is done by majority voting:
+$$
+\hat{y} = \text{mode}\left(\hat{y}_1, \hat{y}_2, \dots, \hat{y}_B\right)
+$$
+Random Forest reduces variance by averaging predictions from multiple models. Without all the gory details about how decision trees work, this method is best suited for high-dimensional, non-stationary data, which the migraine prediction task satisfied. In this case, Random Forest was trained on the migraine data with an additional features of the "days since start", also `hydration_level` was removed from features as it significantly reduced the accuracy of the model. The following table presents the results of learning from the migraine data:
+```{r}
+rep_rf = read.csv(rf_report)
+print(rep_rf)
+```
+
+## Long Short-Term Memory (LSTM)
+
+The LSTM model is a type of recurrent neural network (RNN) designed to handle sequences of data, such as time-series data. At each time step $t$, the LSTM takes the input $x_t$ and updates its hidden state $h_t$ and cell state $c_t$ based on the previous states $h_{t-1}$ and $c_{t-1}$. The key equations that govern an LSTM unit are:
+
+The LSTM learns to capture long-range dependencies in sequential data by selectively forgetting, updating, and outputting information at each time step. The following table presents the report for our LSTM setup (for detailed description consult the git hub repo). The model in question was trained using all the features, and additional sinusoidal features which improved the prediction accuracy of the model. This report was generated for a model trained on 23-day long sequences, as this is the model used for the app. However, one must acknowledge that the we had to truncated data to include only 90 day long sequences. Great improvements were observed by training on longer sequences.
+```{r}
+lstm_rep = read.csv(lstm_report)
+print(lstm_rep)
+```
+# Conclusions
+
+Although the models were used in the migraine prediction app that was submitted as a part of the project - the overall accuracy of the models is slightly better than chance (Random Forest – 0.57, LSTM - 0.50). Therefore, their clinical significance is nul. Albeit, this project provided valuable insights into the complexities of predicting migraine occurrences. The low accuracy emphasized the challenge of modeling a multifactorial medical event, where numerous unaccounted variables may influence the outcome.
+
+One key takeaway was the importance of data quality. The dataset, sourced from Kaggle, lacked detailed information on its origins, which made it difficult to assess its reliability. Additionally, although the dataset contained over 11,000 entries, the data was not structured in a way that allowed the models to easily capture meaningful patterns. Feature engineering played a significant role, particularly for the LSTM model, where cyclical features (e.g., day of the week) were added to capture temporal dependencies. Despite these efforts, the models were unable to meaningfully predict migraines, likely due to the limited and possibly noisy data.
+
+Another lesson learned was that while Random Forest and LSTM are powerful models, they are not a one-size-fits-all solution, especially for complex time-series tasks like migraine prediction. Future work could focus on incorporating more diverse data sources, improving feature engineering, and exploring alternative models that might be better suited for capturing the intricate patterns in medical data. 
+While the results were underwhelming, the project provided a strong foundation for future exploration in the realm of predictive modeling for healthcare. The challenges I faced underscore the importance of high-quality, well-structured data in building reliable predictive models. Nevertheless, the current academic reports on migraine prediction analysis underscore that migraine episodes are notoriously unpredictable - one study reported moderate accuracy (best 0.62, achieved by random forest) of machine learning models in the migraine prediction task [Stubberud et al. (2023)]. So hey, we are not completely lagging behind.

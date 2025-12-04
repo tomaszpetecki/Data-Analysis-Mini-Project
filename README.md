@@ -11,3 +11,11 @@ For the purposes of training the data models, a Kaggle database was employed. Th
 
 Currently,
 due to the project being a *solo-project* some key functionalities of the app were not implemented. Real-time data collection and analaysis were outside of the scope of this course, and therefore, the model operates on the data from 100 users from the Kaggle database.x
+
+## How to use?
+1. Download the repo
+2. Open terminal and type `streamlit run src/app/main.py`
+3. Run
+
+## Report
+A `.pdf` report is located in `src/reports/miniprojectreport.pdf`
